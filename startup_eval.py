@@ -29,8 +29,11 @@ Rules:
 - Do not take the founder's framing at face value. Triangulate.
 - Be direct about weaknesses. A good memo surfaces the reasons NOT to invest as
   clearly as the reasons to invest.
-- Cite sources inline as [source: domain] when making factual claims from search.
-- If you cannot verify something, say so explicitly rather than guessing.
+- Cite sources via the web_search tool's native citations — every factual claim from
+  search should be anchored to a searched page. If you cannot verify something, write
+  "unverified" rather than guessing.
+- Output ONLY the memo. Do not include any preamble, thinking, or narration about your
+  research process. Your first character must be `#` (the top-level heading).
 
 Output a Markdown memo with exactly these sections, in this order:
 
@@ -139,7 +142,38 @@ def run_evaluation(name: str, url: str, ceo: str, deck: str | None) -> str:
         # Defensive: break to avoid an infinite loop.
         break
 
-    return "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+    # Walk text blocks, inlining web_search citations as [domain] tags.
+    parts: list[str] = []
+    for b in resp.content:
+        if getattr(b, "type", None) != "text":
+            continue
+        chunk = b.text
+        cites = getattr(b, "citations", None) or []
+        domains: list[str] = []
+        seen: set[str] = set()
+        for c in cites:
+            url = getattr(c, "url", None) or ""
+            if not url:
+                continue
+            # Extract bare domain.
+            dom = url.split("://", 1)[-1].split("/", 1)[0]
+            if dom.startswith("www."):
+                dom = dom[4:]
+            if dom and dom not in seen:
+                seen.add(dom)
+                domains.append(dom)
+        if domains:
+            chunk = chunk + " [" + ", ".join(domains) + "]"
+        parts.append(chunk)
+    text = "".join(parts)
+
+    # Strip any preamble before the first Markdown heading.
+    if text.lstrip().startswith("# "):
+        return text.lstrip()
+    idx = text.find("\n# ")
+    if idx != -1:
+        return text[idx + 1 :]
+    return text
 
 
 def main():
