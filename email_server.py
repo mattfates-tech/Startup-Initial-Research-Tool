@@ -18,8 +18,8 @@ Setup (one-time):
   5. Run:  python email_server.py
      Or with gunicorn:  gunicorn email_server:app
 
-For local testing, expose port 5000 with:
-  ngrok http 5000
+For local testing, expose port 8000 with:
+  ngrok http 8000
 Then set the Mailgun route URL to your ngrok HTTPS URL + /inbound.
 
 Environment variables (all required unless noted):
@@ -254,6 +254,6 @@ def health():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 8000))
     log.info("Starting server on port %d, receiving at %s", port, EVAL_EMAIL)
     app.run(host="0.0.0.0", port=port)

@@ -11,7 +11,7 @@ Usage:
 Or use a canned sample pitch email:
     python test_inbound.py --to your@email.com --sample
 
-The script POSTs to http://localhost:5000/inbound exactly as Mailgun would,
+The script POSTs to http://localhost:8000/inbound exactly as Mailgun would,
 then prints the HTTP response. The evaluation runs and the reply is sent to
 --to via the Mailgun sandbox.
 
@@ -80,7 +80,7 @@ def simulate_inbound(server_url: str, sender: str, subject: str, body: str) -> N
 def main():
     p = argparse.ArgumentParser(description="Simulate Mailgun inbound webhook.")
     p.add_argument("--to", required=True, help="Your email address (reply will be sent here)")
-    p.add_argument("--server", default="http://localhost:5000", help="Server URL (default: http://localhost:5000)")
+    p.add_argument("--server", default="http://localhost:8000", help="Server URL (default: http://localhost:8000)")
     p.add_argument("--sample", action="store_true", help="Use built-in sample pitch email")
     p.add_argument("--company", help="Company name (used when --sample is not set)")
     p.add_argument("--url", help="Company website URL")
