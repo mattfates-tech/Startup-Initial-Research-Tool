@@ -42,7 +42,6 @@ $800/seat/year. We launched in January and have 12 paying firms (480 seats)
 with zero churn.
 
 Company website: https://luminary.ai
-Pitch deck: https://docsend.com/view/luminary-seed-2026
 
 CEO: Sarah Chen (former Casetext eng lead, Stanford CS/JD)
 Co-founder: Marcus Webb (ex-Thomson Reuters product, 10 years legal tech)

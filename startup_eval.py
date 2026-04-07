@@ -14,7 +14,7 @@ import base64
 import sys
 from pathlib import Path
 
-from anthropic import Anthropic
+from anthropic import Anthropic, BadRequestError
 
 MODEL = "claude-opus-4-6"
 
@@ -119,28 +119,37 @@ def build_user_message(name: str, url: str, ceo: str, deck: str | None):
     return {"role": "user", "content": content}
 
 
+def _call_model(client, messages):
+    return client.messages.create(
+        model=MODEL,
+        max_tokens=8000,
+        system=SYSTEM_PROMPT,
+        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 15}],
+        messages=messages,
+    )
+
+
 def run_evaluation(name: str, url: str, ceo: str, deck: str | None) -> str:
     client = Anthropic()
-    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 15}]
 
     messages = [build_user_message(name, url, ceo, deck)]
-
-    # Agentic loop: keep handing tool results back until Claude stops calling tools.
-    while True:
-        resp = client.messages.create(
-            model=MODEL,
-            max_tokens=8000,
-            system=SYSTEM_PROMPT,
-            tools=tools,
-            messages=messages,
-        )
-        messages.append({"role": "assistant", "content": resp.content})
-        if resp.stop_reason != "tool_use":
-            break
-        # Server-side tools (web_search) are executed by the API; we only need to
-        # loop if the model returns client-side tool_use, which it shouldn't here.
-        # Defensive: break to avoid an infinite loop.
-        break
+    try:
+        resp = _call_model(client, messages)
+    except BadRequestError as exc:
+        # If the deck URL can't be fetched (e.g. Docsend requires auth, dead link),
+        # retry without it and note the failure in the prompt so the memo reflects it.
+        if deck and "Unable to download the file" in str(exc):
+            print(f"Deck fetch failed for {deck!r} — retrying without deck")
+            messages = [build_user_message(name, url, ceo, None)]
+            messages[0]["content"][-1]["text"] += (
+                f"\n\nNote: A pitch deck link was provided ({deck}) but could not be "
+                "fetched (likely gated behind authentication or a dead link). "
+                "Proceed with the memo based on web research alone, and flag in the "
+                "memo that the deck was unavailable for review."
+            )
+            resp = _call_model(client, messages)
+        else:
+            raise
 
     # Walk text blocks, inlining web_search citations as [domain] tags.
     parts: list[str] = []
