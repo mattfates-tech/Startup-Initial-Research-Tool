@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: startup-diligence-tool
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn email_server:app --timeout 180 --workers 1
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false  # set in Render dashboard — do not commit to repo
+      - key: PYTHON_VERSION
+        value: "3.12"

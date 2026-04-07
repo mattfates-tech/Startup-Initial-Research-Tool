@@ -42,7 +42,7 @@ from pathlib import Path
 import markdown
 import requests
 from dotenv import load_dotenv
-from flask import Flask, Response, abort, request
+from flask import Flask, Response, abort, render_template_string, request
 
 from email_extractor import extract_startup_info, find_deck_url_in_body
 from startup_eval import run_evaluation
@@ -53,10 +53,11 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-MAILGUN_API_KEY = os.environ["MAILGUN_API_KEY"]
-MAILGUN_DOMAIN = os.environ["MAILGUN_DOMAIN"]
-EVAL_EMAIL = os.environ.get("EVAL_EMAIL", f"evaluate@{MAILGUN_DOMAIN}")
+MAILGUN_API_KEY = os.environ.get("MAILGUN_API_KEY", "")
+MAILGUN_DOMAIN = os.environ.get("MAILGUN_DOMAIN", "")
+EVAL_EMAIL = os.environ.get("EVAL_EMAIL", f"evaluate@{MAILGUN_DOMAIN}" if MAILGUN_DOMAIN else "")
 MAILGUN_WEBHOOK_KEY = os.environ.get("MAILGUN_WEBHOOK_KEY", "")
+MAILGUN_CONFIGURED = bool(MAILGUN_API_KEY and MAILGUN_DOMAIN)
 
 MAILGUN_API_BASE = "https://api.mailgun.net/v3"
 
@@ -168,6 +169,9 @@ def _extract_pdf_attachment() -> str | None:
 
 @app.route("/inbound", methods=["POST"])
 def inbound():
+    if not MAILGUN_CONFIGURED:
+        log.warning("Received inbound POST but Mailgun is not configured")
+        return Response("mailgun not configured", status=503)
     # Verify signature.
     token = request.form.get("token", "")
     timestamp = request.form.get("timestamp", "")
@@ -245,12 +249,130 @@ def inbound():
 
 
 # ---------------------------------------------------------------------------
+# Browser-based web form (use this at http://localhost:8000/)
+# ---------------------------------------------------------------------------
+
+FORM_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Startup Diligence Tool</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         max-width: 680px; margin: 60px auto; padding: 0 20px; color: #1a1a1a; }
+  h1 { margin-bottom: 6px; }
+  p.tagline { color: #666; margin-top: 0; }
+  form { display: flex; flex-direction: column; gap: 14px; margin-top: 32px; }
+  label { font-weight: 600; font-size: 14px; }
+  input[type=text] { padding: 10px 12px; font-size: 15px; border: 1px solid #ccc;
+                     border-radius: 6px; font-family: inherit; }
+  button { padding: 14px; font-size: 16px; font-weight: 600; background: #1a1a1a;
+           color: white; border: 0; border-radius: 6px; cursor: pointer;
+           margin-top: 8px; }
+  button:hover { background: #333; }
+  button:disabled { background: #999; cursor: wait; }
+  .hint { color: #888; font-size: 13px; margin-top: -6px; }
+</style>
+</head>
+<body>
+  <h1>Startup Diligence Tool</h1>
+  <p class="tagline">A skeptical VC memo, researched and written in ~90 seconds.</p>
+  <form method="POST" action="/evaluate" onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').innerText='Researching... (~90 sec)';">
+    <label for="name">Company name</label>
+    <input type="text" name="name" id="name" required placeholder="Anthropic">
+
+    <label for="url">Website URL</label>
+    <input type="text" name="url" id="url" required placeholder="https://anthropic.com">
+
+    <label for="ceo">CEO name</label>
+    <input type="text" name="ceo" id="ceo" required placeholder="Dario Amodei">
+
+    <label for="deck">Pitch deck link (optional)</label>
+    <input type="text" name="deck" id="deck" placeholder="https://... (public PDF only)">
+    <div class="hint">Gated links like Docsend require authentication and won't work. Leave blank if unsure.</div>
+
+    <button type="submit">Generate diligence memo</button>
+  </form>
+</body>
+</html>
+"""
+
+RESULT_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{ company }} — Diligence Memo</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1a1a1a;
+         line-height: 1.55; }
+  h1 { border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; }
+  h2 { margin-top: 32px; color: #2c2c2c; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #f5f5f5; }
+  code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; font-size: 0.9em; }
+  hr { border: none; border-top: 1px solid #e0e0e0; margin: 24px 0; }
+  a.back { display: inline-block; margin-bottom: 24px; color: #666;
+           text-decoration: none; font-size: 14px; }
+  a.back:hover { color: #000; }
+</style>
+</head>
+<body>
+  <a href="/" class="back">← Evaluate another company</a>
+  {{ memo|safe }}
+</body>
+</html>
+"""
+
+ERROR_HTML = """
+<!DOCTYPE html>
+<html>
+<body style="font-family: sans-serif; max-width: 700px; margin: 60px auto; padding: 0 20px;">
+<h1>Something went wrong</h1>
+<pre style="background: #f8f8f8; padding: 16px; border-radius: 6px; white-space: pre-wrap; word-wrap: break-word;">{{ error }}</pre>
+<p><a href="/">← Try again</a></p>
+</body>
+</html>
+"""
+
+
+@app.route("/", methods=["GET"])
+def form():
+    return render_template_string(FORM_HTML)
+
+
+@app.route("/evaluate", methods=["POST"])
+def evaluate():
+    name = request.form.get("name", "").strip()
+    url = request.form.get("url", "").strip()
+    ceo = request.form.get("ceo", "").strip()
+    deck = request.form.get("deck", "").strip() or None
+
+    if not all([name, url, ceo]):
+        return render_template_string(ERROR_HTML, error="Company name, URL, and CEO are all required."), 400
+
+    log.info("Web form evaluation: company=%r url=%r ceo=%r deck=%r", name, url, ceo, deck)
+
+    try:
+        memo_md = run_evaluation(name, url, ceo, deck)
+    except Exception as exc:
+        log.exception("Evaluation failed")
+        return render_template_string(ERROR_HTML, error=str(exc)), 500
+
+    memo_html = markdown.markdown(memo_md, extensions=["tables"])
+    return render_template_string(RESULT_HTML, company=name, memo=memo_html)
+
+
+# ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
 
 @app.route("/health")
 def health():
-    return {"status": "ok", "eval_email": EVAL_EMAIL}
+    return {"status": "ok", "mailgun_configured": MAILGUN_CONFIGURED, "eval_email": EVAL_EMAIL}
 
 
 if __name__ == "__main__":
