@@ -50,6 +50,7 @@ from startup_eval import run_evaluation
 load_dotenv()
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32 MB upload cap
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
@@ -278,7 +279,7 @@ FORM_HTML = """
 <body>
   <h1>Startup Diligence Tool</h1>
   <p class="tagline">A skeptical VC memo, researched and written in ~90 seconds.</p>
-  <form method="POST" action="/evaluate" onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').innerText='Researching... (~90 sec)';">
+  <form method="POST" action="/evaluate" enctype="multipart/form-data" onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').innerText='Researching... (~90 sec)';">
     <label for="name">Company name</label>
     <input type="text" name="name" id="name" required placeholder="Anthropic">
 
@@ -288,9 +289,13 @@ FORM_HTML = """
     <label for="ceo">CEO name</label>
     <input type="text" name="ceo" id="ceo" required placeholder="Dario Amodei">
 
-    <label for="deck">Pitch deck link (optional)</label>
+    <label for="deck_file">Pitch deck PDF (optional)</label>
+    <input type="file" name="deck_file" id="deck_file" accept="application/pdf,.pdf">
+    <div class="hint">Upload a PDF directly from your computer.</div>
+
+    <label for="deck">— or — pitch deck link (optional)</label>
     <input type="text" name="deck" id="deck" placeholder="https://... (public PDF only)">
-    <div class="hint">Gated links like Docsend require authentication and won't work. Leave blank if unsure.</div>
+    <div class="hint">Gated links like Docsend require authentication and won't work.</div>
 
     <button type="submit">Generate diligence memo</button>
   </form>
@@ -349,11 +354,24 @@ def evaluate():
     name = request.form.get("name", "").strip()
     url = request.form.get("url", "").strip()
     ceo = request.form.get("ceo", "").strip()
-    deck = request.form.get("deck", "").strip() or None
+    deck_url = request.form.get("deck", "").strip() or None
 
     if not all([name, url, ceo]):
         return render_template_string(ERROR_HTML, error="Company name, URL, and CEO are all required."), 400
 
+    # Uploaded PDF takes priority over a linked URL.
+    pdf_path: str | None = None
+    uploaded = request.files.get("deck_file")
+    if uploaded and uploaded.filename:
+        if not uploaded.filename.lower().endswith(".pdf"):
+            return render_template_string(ERROR_HTML, error="Pitch deck upload must be a PDF file."), 400
+        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+        uploaded.save(tmp.name)
+        pdf_path = tmp.name
+        log.info("Saved uploaded deck: %s -> %s (%d bytes)",
+                 uploaded.filename, pdf_path, Path(pdf_path).stat().st_size)
+
+    deck = pdf_path or deck_url
     log.info("Web form evaluation: company=%r url=%r ceo=%r deck=%r", name, url, ceo, deck)
 
     try:
@@ -361,6 +379,9 @@ def evaluate():
     except Exception as exc:
         log.exception("Evaluation failed")
         return render_template_string(ERROR_HTML, error=str(exc)), 500
+    finally:
+        if pdf_path:
+            Path(pdf_path).unlink(missing_ok=True)
 
     memo_html = markdown.markdown(memo_md, extensions=["tables"])
     return render_template_string(RESULT_HTML, company=name, memo=memo_html)
