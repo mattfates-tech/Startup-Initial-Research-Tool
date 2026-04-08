@@ -1,15 +1,15 @@
 """Simulate a Mailgun inbound webhook POST to test the full pipeline locally.
 
 Usage:
-    python test_inbound.py \
-        --to your@email.com \
-        --company "Acme AI" \
-        --url "https://acme.ai" \
-        --ceo "Jane Doe" \
-        [--deck https://docsend.com/view/...]
-
-Or use a canned sample pitch email:
+    # Inline pitch (no attachment)
     python test_inbound.py --to your@email.com --sample
+
+    # Forwarded email with an attached PDF deck
+    python test_inbound.py --to your@email.com --sample --deck-file deck.pdf
+
+    # Custom company without using the canned sample
+    python test_inbound.py --to your@email.com \
+        --company "Acme AI" --url "https://acme.ai" --ceo "Jane Doe"
 
 The script POSTs to http://localhost:8000/inbound exactly as Mailgun would,
 then prints the HTTP response. The evaluation runs and the reply is sent to
@@ -21,6 +21,7 @@ Make sure email_server.py is running first:
 
 import argparse
 import sys
+from pathlib import Path
 
 import requests
 
@@ -51,7 +52,13 @@ Sarah
 """.strip()
 
 
-def simulate_inbound(server_url: str, sender: str, subject: str, body: str) -> None:
+def simulate_inbound(
+    server_url: str,
+    sender: str,
+    subject: str,
+    body: str,
+    deck_file: str | None = None,
+) -> None:
     payload = {
         "recipient": "evaluate@mg.yourdomain.com",
         "sender": sender,
@@ -60,14 +67,23 @@ def simulate_inbound(server_url: str, sender: str, subject: str, body: str) -> N
         "body-plain": body,
         "stripped-text": body,
         "body-html": f"<pre>{body}</pre>",
-        "attachment-count": "0",
+        "attachment-count": "1" if deck_file else "0",
         # Mailgun signature fields — verification is skipped when MAILGUN_WEBHOOK_KEY is unset
         "token": "test-token",
         "timestamp": "1712500000",
         "signature": "test-signature",
     }
+
+    files = {}
+    if deck_file:
+        path = Path(deck_file)
+        if not path.exists():
+            sys.exit(f"Deck file not found: {deck_file}")
+        files["attachment-1"] = (path.name, path.read_bytes(), "application/pdf")
+        print(f"Attaching {path.name} ({path.stat().st_size} bytes) as attachment-1")
+
     print(f"POSTing to {server_url}/inbound ...")
-    resp = requests.post(f"{server_url}/inbound", data=payload, timeout=300)
+    resp = requests.post(f"{server_url}/inbound", data=payload, files=files or None, timeout=300)
     print(f"Status: {resp.status_code}")
     print(f"Body:   {resp.text}")
     if resp.status_code == 200:
@@ -85,6 +101,7 @@ def main():
     p.add_argument("--url", help="Company website URL")
     p.add_argument("--ceo", help="CEO name")
     p.add_argument("--deck", help="Deck URL (optional)")
+    p.add_argument("--deck-file", help="Path to a PDF to attach as a forwarded email attachment")
     args = p.parse_args()
 
     if args.sample:
@@ -103,7 +120,7 @@ def main():
         body = "\n".join(lines)
         subject = f"{args.company} — evaluation request"
 
-    simulate_inbound(args.server, args.to, subject, body)
+    simulate_inbound(args.server, args.to, subject, body, deck_file=args.deck_file)
 
 
 if __name__ == "__main__":

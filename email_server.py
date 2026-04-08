@@ -152,14 +152,26 @@ def send_error(to: str, original_subject: str, error_msg: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _extract_pdf_attachment() -> str | None:
-    """Save the first PDF attachment to a temp file; return its path or None."""
+    """Save the first PDF attachment to a temp file; return its path or None.
+
+    Recognizes a file as a PDF if EITHER its content type is application/pdf
+    OR its filename ends in .pdf (Outlook and some forwarders mislabel PDFs
+    as application/octet-stream).
+    """
     count = int(request.form.get("attachment-count", 0))
+    log.info("Inbound email has %d attachment(s)", count)
     for i in range(1, count + 1):
         attachment = request.files.get(f"attachment-{i}")
-        if attachment and attachment.content_type == "application/pdf":
+        if not attachment:
+            continue
+        filename = attachment.filename or ""
+        ctype = attachment.content_type or ""
+        is_pdf = ctype == "application/pdf" or filename.lower().endswith(".pdf")
+        log.info("  attachment-%d: %r content_type=%r is_pdf=%s", i, filename, ctype, is_pdf)
+        if is_pdf:
             tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
             attachment.save(tmp.name)
-            log.info("Saved PDF attachment: %s (%d bytes)", attachment.filename, Path(tmp.name).stat().st_size)
+            log.info("  -> saved as %s (%d bytes)", tmp.name, Path(tmp.name).stat().st_size)
             return tmp.name
     return None
 
