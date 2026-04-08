@@ -14,7 +14,7 @@ import base64
 import sys
 from pathlib import Path
 
-from anthropic import Anthropic, BadRequestError
+from anthropic import Anthropic, BadRequestError, RateLimitError
 
 MODEL = "claude-opus-4-6"
 
@@ -120,13 +120,34 @@ def build_user_message(name: str, url: str, ceo: str, deck: str | None):
 
 
 def _call_model(client, messages):
-    return client.messages.create(
-        model=MODEL,
-        max_tokens=8000,
-        system=SYSTEM_PROMPT,
-        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 15}],
-        messages=messages,
-    )
+    """Call the model, automatically retrying once on a rate-limit error."""
+    import time
+    try:
+        return client.messages.create(
+            model=MODEL,
+            max_tokens=6000,
+            system=SYSTEM_PROMPT,
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 8}],
+            messages=messages,
+        )
+    except RateLimitError as exc:
+        # Honor the API's retry-after hint, capped at 90 seconds.
+        retry_after = 60
+        try:
+            hint = exc.response.headers.get("retry-after")
+            if hint:
+                retry_after = min(int(float(hint)), 90)
+        except Exception:
+            pass
+        print(f"Rate limit hit — sleeping {retry_after}s then retrying once")
+        time.sleep(retry_after)
+        return client.messages.create(
+            model=MODEL,
+            max_tokens=6000,
+            system=SYSTEM_PROMPT,
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 8}],
+            messages=messages,
+        )
 
 
 def run_evaluation(name: str, url: str, ceo: str, deck: str | None) -> str:

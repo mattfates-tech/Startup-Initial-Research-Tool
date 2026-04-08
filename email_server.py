@@ -408,6 +408,15 @@ def evaluate():
         return render_template_string(RESULT_HTML, company=name, memo=memo_html)
     except Exception as exc:
         log.exception("Evaluation failed")
+        # Friendlier message for the most common failure mode.
+        msg = str(exc)
+        if "rate_limit_error" in msg or "RateLimitError" in type(exc).__name__:
+            friendly = (
+                "Anthropic API rate limit hit (30,000 input tokens/minute on this key). "
+                "Please wait about 60 seconds and try again. If this happens repeatedly, "
+                "the rate limit on your API key needs to be increased in the Anthropic console."
+            )
+            return render_template_string(ERROR_HTML, error=friendly), 429
         return render_template_string(ERROR_HTML, error=f"{type(exc).__name__}: {exc}"), 500
     finally:
         if pdf_path:
