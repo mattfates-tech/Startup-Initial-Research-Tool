@@ -54,6 +54,18 @@ app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32 MB upload cap
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(exc):
+    """Backstop: render any unhandled exception as a friendly error page."""
+    log.exception("Unhandled exception")
+    error_html = """<!DOCTYPE html><html><body style="font-family: sans-serif; max-width: 700px; margin: 60px auto; padding: 0 20px;">
+<h1>Something went wrong</h1>
+<pre style="background: #f8f8f8; padding: 16px; border-radius: 6px; white-space: pre-wrap;">{type}: {msg}</pre>
+<p><a href="/">← Try again</a></p>
+</body></html>"""
+    return error_html.format(type=type(exc).__name__, msg=str(exc)), 500
+
 MAILGUN_API_KEY = os.environ.get("MAILGUN_API_KEY", "")
 MAILGUN_DOMAIN = os.environ.get("MAILGUN_DOMAIN", "")
 EVAL_EMAIL = os.environ.get("EVAL_EMAIL", f"evaluate@{MAILGUN_DOMAIN}" if MAILGUN_DOMAIN else "")
@@ -170,6 +182,7 @@ def _extract_pdf_attachment() -> str | None:
         log.info("  attachment-%d: %r content_type=%r is_pdf=%s", i, filename, ctype, is_pdf)
         if is_pdf:
             tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+            tmp.close()  # Required on Windows so .save() can reopen the file.
             attachment.save(tmp.name)
             log.info("  -> saved as %s (%d bytes)", tmp.name, Path(tmp.name).stat().st_size)
             return tmp.name
@@ -377,7 +390,10 @@ def evaluate():
     if uploaded and uploaded.filename:
         if not uploaded.filename.lower().endswith(".pdf"):
             return render_template_string(ERROR_HTML, error="Pitch deck upload must be a PDF file."), 400
+        # IMPORTANT: close the tempfile handle before .save() — on Windows, you cannot
+        # open a file for writing while another handle to it is open.
         tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+        tmp.close()
         uploaded.save(tmp.name)
         pdf_path = tmp.name
         log.info("Saved uploaded deck: %s -> %s (%d bytes)",
@@ -388,15 +404,14 @@ def evaluate():
 
     try:
         memo_md = run_evaluation(name, url, ceo, deck)
+        memo_html = markdown.markdown(memo_md, extensions=["tables"])
+        return render_template_string(RESULT_HTML, company=name, memo=memo_html)
     except Exception as exc:
         log.exception("Evaluation failed")
-        return render_template_string(ERROR_HTML, error=str(exc)), 500
+        return render_template_string(ERROR_HTML, error=f"{type(exc).__name__}: {exc}"), 500
     finally:
         if pdf_path:
             Path(pdf_path).unlink(missing_ok=True)
-
-    memo_html = markdown.markdown(memo_md, extensions=["tables"])
-    return render_template_string(RESULT_HTML, company=name, memo=memo_html)
 
 
 # ---------------------------------------------------------------------------
