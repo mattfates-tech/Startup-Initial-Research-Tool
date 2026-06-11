@@ -107,6 +107,12 @@ def build_user_message(focus: str | None) -> dict:
 
 
 def run_research(focus: str | None = None) -> str:
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        sys.exit(
+            "ANTHROPIC_API_KEY is not set. Locally: add it to .env or export it. "
+            "In GitHub Actions: add it as a repository secret "
+            "(Settings → Secrets and variables → Actions)."
+        )
     client = Anthropic()
     messages = [build_user_message(focus)]
 
