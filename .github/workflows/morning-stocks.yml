@@ -25,6 +25,10 @@ jobs:
   briefing:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      MAILGUN_API_KEY: ${{ secrets.MAILGUN_API_KEY }}
+      MAILGUN_DOMAIN: ${{ secrets.MAILGUN_DOMAIN }}
+      STOCK_REPORT_EMAIL: ${{ secrets.STOCK_REPORT_EMAIL || 'mattfates@gmail.com' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -53,11 +57,7 @@ jobs:
           retention-days: 30
 
       - name: Email briefing
-        if: ${{ secrets.MAILGUN_API_KEY != '' }}
-        env:
-          MAILGUN_API_KEY: ${{ secrets.MAILGUN_API_KEY }}
-          MAILGUN_DOMAIN: ${{ secrets.MAILGUN_DOMAIN }}
-          STOCK_REPORT_EMAIL: ${{ secrets.STOCK_REPORT_EMAIL || 'mattfates@gmail.com' }}
+        if: ${{ env.MAILGUN_API_KEY != '' }}
         run: |
           python - <<'EOF'
           from pathlib import Path
