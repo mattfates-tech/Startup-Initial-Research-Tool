@@ -1,0 +1,67 @@
+# Runs the stock research agent every weekday morning before the US market
+# opens, uploads the briefing as an artifact, and emails it if Mailgun
+# secrets are configured.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   ANTHROPIC_API_KEY     - always required
+#   MAILGUN_API_KEY       - only for email delivery
+#   MAILGUN_DOMAIN        - only for email delivery
+#   STOCK_REPORT_EMAIL    - recipient address for the briefing
+
+name: Morning Stock Briefing
+
+on:
+  schedule:
+    # 11:30 UTC = 7:30am ET during daylight saving (6:30am EST in winter),
+    # comfortably before the 9:30am ET market open. Weekdays only.
+    - cron: "30 11 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      focus:
+        description: "Optional theme to weight picks toward (e.g. 'AI and semiconductors')"
+        required: false
+
+jobs:
+  briefing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate briefing
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "${{ inputs.focus }}" ]; then
+            python stock_research.py --out briefing.md --focus "${{ inputs.focus }}"
+          else
+            python stock_research.py --out briefing.md
+          fi
+
+      - name: Upload briefing artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: morning-briefing-${{ github.run_id }}
+          path: briefing.md
+          retention-days: 30
+
+      - name: Email briefing
+        if: ${{ secrets.MAILGUN_API_KEY != '' && secrets.STOCK_REPORT_EMAIL != '' }}
+        env:
+          MAILGUN_API_KEY: ${{ secrets.MAILGUN_API_KEY }}
+          MAILGUN_DOMAIN: ${{ secrets.MAILGUN_DOMAIN }}
+          STOCK_REPORT_EMAIL: ${{ secrets.STOCK_REPORT_EMAIL }}
+        run: |
+          python - <<'EOF'
+          from pathlib import Path
+          import os
+          from stock_research import send_briefing
+          send_briefing(os.environ["STOCK_REPORT_EMAIL"], Path("briefing.md").read_text())
+          EOF
