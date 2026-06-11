@@ -53,11 +53,11 @@ jobs:
           retention-days: 30
 
       - name: Email briefing
-        if: ${{ secrets.MAILGUN_API_KEY != '' && secrets.STOCK_REPORT_EMAIL != '' }}
+        if: ${{ secrets.MAILGUN_API_KEY != '' }}
         env:
           MAILGUN_API_KEY: ${{ secrets.MAILGUN_API_KEY }}
           MAILGUN_DOMAIN: ${{ secrets.MAILGUN_DOMAIN }}
-          STOCK_REPORT_EMAIL: ${{ secrets.STOCK_REPORT_EMAIL }}
+          STOCK_REPORT_EMAIL: ${{ secrets.STOCK_REPORT_EMAIL || 'mattfates@gmail.com' }}
         run: |
           python - <<'EOF'
           from pathlib import Path
